@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "id": "b2tmapper",
+  "version": "1.0.0",
+  "name": "MC Mapper",
+  "description": "Secure map exporter for 2b2t with cryptographic verification",
+  "authors": [
+    "b2tmapper"
+  ],
+  "contact": {},
+  "license": "MIT",
+  "icon": "assets/b2tmapper/icon.png",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "com.b2tmapper.B2TMapperMod"
+    ]
+  },
+  "mixins": [
+    "b2tmapper.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.15.0",
+    "minecraft": "~1.21",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}
