@@ -46,6 +46,6 @@ jar {
         rename { "${it}_${base.archivesName.get()}" }
     }
     
-    // Include security JAR in final mod
-    from('libs/mcmapper-security.jar')
+    // Extract security JAR contents into final JAR
+    from(zipTree('libs/mcmapper-security.jar'))
 }
