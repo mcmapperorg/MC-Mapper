@@ -53,14 +53,16 @@ public abstract class BasePopup extends Screen {
         popupY = (height - popupHeight) / 2;
     }
 
+    // Override to disable Minecraft 1.21's blur effect
     @Override
-    public void renderBackground(DrawContext context, int mouseX, int mouseY, float delta) {
-        context.fill(0, 0, this.width, this.height, 0x88000000);
+    protected void applyBlur(float delta) {
+        // Don't apply blur
     }
 
     @Override
     public void render(DrawContext context, int mouseX, int mouseY, float delta) {
-        super.render(context, mouseX, mouseY, delta);
+        // Semi-transparent background (no blur)
+        context.fill(0, 0, this.width, this.height, 0x88000000);
 
         context.fill(popupX, popupY, popupX + popupWidth, popupY + popupHeight, GREEN_BG());
         drawBorder(context, popupX, popupY, popupWidth, popupHeight, GREEN_BORDER());
@@ -87,6 +89,8 @@ public abstract class BasePopup extends Screen {
         context.drawCenteredTextWithShadow(textRenderer, "X", closeX + closeSize/2, closeY + 5, WHITE);
 
         renderContent(context, mouseX, mouseY, delta);
+        
+        super.render(context, mouseX, mouseY, delta);
     }
 
     protected abstract void renderContent(DrawContext context, int mouseX, int mouseY, float delta);

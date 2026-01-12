@@ -16,6 +16,7 @@ import java.awt.image.BufferedImage;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -346,12 +347,54 @@ public class PingExporter {
     }
 
     private static String generateHash(PingData data) {
-        return com.b2tmapper.security.HashGenerator.generatePingHash(
-            data.pingId, data.modVersion, data.gridX, data.gridZ,
-            data.worldX, data.worldZ, data.exactX, data.exactY, data.exactZ,
-            data.playerName, data.playerUuid, data.serverAddress,
-            data.dimension, data.timestamp, data.hasMapData,
-            data.mapGridX, data.mapGridZ, data.mapColors
-        );
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            
+            StringBuilder hashInput = new StringBuilder();
+            hashInput.append(data.pingId).append("|");
+            hashInput.append(data.modVersion).append("|");
+            hashInput.append(data.gridX).append("|");
+            hashInput.append(data.gridZ).append("|");
+            hashInput.append(data.worldX).append("|");
+            hashInput.append(data.worldZ).append("|");
+            hashInput.append(formatDouble(data.exactX)).append("|");
+            hashInput.append(formatDouble(data.exactY)).append("|");
+            hashInput.append(formatDouble(data.exactZ)).append("|");
+            hashInput.append(data.playerName).append("|");
+            hashInput.append(data.playerUuid).append("|");
+            hashInput.append(data.serverAddress).append("|");
+            hashInput.append(data.dimension).append("|");
+            hashInput.append(data.timestamp).append("|");
+            hashInput.append(data.hasMapData).append("|");
+            
+            if (data.hasMapData && data.mapColors != null && !data.mapColors.isEmpty()) {
+                hashInput.append(data.mapGridX).append("|");
+                hashInput.append(data.mapGridZ).append("|");
+                for (int i = 0; i < Math.min(100, data.mapColors.size()); i++) {
+                    hashInput.append(data.mapColors.get(i));
+                    if (i < 99 && i < data.mapColors.size() - 1) {
+                        hashInput.append(",");
+                    }
+                }
+            }
+            
+            String inputString = hashInput.toString();
+            
+            byte[] hashBytes = digest.digest(inputString.getBytes(StandardCharsets.UTF_8));
+            
+            StringBuilder hexString = new StringBuilder();
+            for (byte b : hashBytes) {
+                String hex = Integer.toHexString(0xff & b);
+                if (hex.length() == 1) {
+                    hexString.append('0');
+                }
+                hexString.append(hex);
+            }
+            
+            return hexString.toString();
+            
+        } catch (Exception e) {
+            return "error";
+        }
     }
 }

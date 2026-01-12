@@ -2,7 +2,6 @@ package com.b2tmapper.client.gui;
 
 import com.b2tmapper.config.ModConfig;
 import com.b2tmapper.config.ModConfig.MenuBarPosition;
-import com.b2tmapper.config.ModConfig.UITheme;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
@@ -14,17 +13,17 @@ public class MenuBarScreen extends Screen {
     private static final Identifier LOGO_TEXTURE = Identifier.of("b2tmapper", "textures/logo.png");
 
     private static final int WHITE = 0xFFFFFFFF;
-
+    
     private int GREEN_BG() { return ModConfig.get().uiTheme.bg; }
     private int GREEN_HOVER() { return ModConfig.get().uiTheme.hover; }
     private int GREEN_BORDER() { return ModConfig.get().uiTheme.border; }
 
-    private static final String[] TABS = {"Settings", "Map", "Ping List", "Live View", "Account"};
+    private static final String[] TABS = {"Settings", "Map Streaming", "Ping List", "Live View", "Account"};
 
     private int barX, barY, barWidth, barHeight;
     private int logoSize = 20;
     private int tabHeight = 18;
-    private int tabWidth = 65;
+    private int tabWidth = 80;
     private int padding = 4;
 
     private int hoveredTab = -1;
@@ -64,15 +63,21 @@ public class MenuBarScreen extends Screen {
         }
     }
 
+    // Override to disable Minecraft 1.21's blur effect
     @Override
-    public void renderBackground(DrawContext context, int mouseX, int mouseY, float delta) {
-        context.fill(0, 0, this.width, this.height, 0x88000000);
+    protected void applyBlur(float delta) {
+        // Don't apply blur
     }
 
     @Override
     public void render(DrawContext context, int mouseX, int mouseY, float delta) {
-        super.render(context, mouseX, mouseY, delta);
+        // Semi-transparent background overlay (no blur)
+        context.fill(0, 0, width, height, 0x88000000);
+        
+        // Menu bar
         renderMenuBar(context, mouseX, mouseY);
+        
+        super.render(context, mouseX, mouseY, delta);
     }
 
     private void renderMenuBar(DrawContext context, int mouseX, int mouseY) {
@@ -181,8 +186,8 @@ public class MenuBarScreen extends Screen {
             case 0: // Settings
                 client.setScreen(new SettingsPopup(this));
                 break;
-            case 1: // Map
-                client.setScreen(new MapSettingsPopup(this));
+            case 1: // Map Streaming
+                client.setScreen(new MapStreamingPopup(this));
                 break;
             case 2: // Ping List
                 client.setScreen(new PingListPopup(this));
