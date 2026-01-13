@@ -3,12 +3,9 @@ plugins {
     id 'maven-publish'
 }
 
-version = "1.0.1"
-group = "com.b2tmapper"
-
-base {
-    archivesName = "mcmapper"
-}
+version = '1.0.1'
+archivesBaseName = 'mcmapper'
+group = 'com.b2tmapper'
 
 repositories {
     mavenCentral()
@@ -17,11 +14,11 @@ repositories {
 dependencies {
     minecraft "com.mojang:minecraft:1.21"
     mappings "net.fabricmc:yarn:1.21+build.9:v2"
-    modImplementation "net.fabricmc:fabric-loader:0.16.0"
-    modImplementation "net.fabricmc.fabric-api:fabric-api:0.100.4+1.21"
+    modImplementation "net.fabricmc:fabric-loader:0.15.11"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:0.100.8+1.21"
     
-    // Security module
-    implementation files('libs/mcmapper-security.jar')
+    // Gson for JSON serialization
+    implementation 'com.google.code.gson:gson:2.10.1'
 }
 
 processResources {
@@ -31,21 +28,8 @@ processResources {
     }
 }
 
-tasks.withType(JavaCompile).configureEach {
-    it.options.release = 21
-}
-
 java {
-    withSourcesJar()
-    sourceCompatibility = JavaVersion.VERSION_21
-    targetCompatibility = JavaVersion.VERSION_21
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
 }
 
-jar {
-    from("LICENSE") {
-        rename { "${it}_${base.archivesName.get()}" }
-    }
-    
-    // Extract security JAR contents into final JAR
-    from(zipTree('libs/mcmapper-security.jar'))
-}
