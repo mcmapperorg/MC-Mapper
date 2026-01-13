@@ -40,6 +40,9 @@ public class ModConfig {
     public boolean showPingBeacons = true;
     public int maxActivePings = 5;
 
+    // Display Case (Map Art Export)
+    public long lastMapArtExport = 0;
+
     public enum MenuBarPosition {
         TOP, LEFT, RIGHT
     }
