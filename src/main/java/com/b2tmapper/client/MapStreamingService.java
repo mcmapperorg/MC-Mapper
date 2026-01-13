@@ -173,6 +173,7 @@ public class MapStreamingService {
             HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(API_BASE + "/servers/" + config.streamingServerId + "/streaming-credentials"))
                 .header("Authorization", "Bearer " + config.authToken)
+                .header("X-Mod-Version", B2TMapperMod.MOD_VERSION)
                 .GET()
                 .build();
 
@@ -413,6 +414,7 @@ public class MapStreamingService {
                 .uri(URI.create(API_BASE + "/maps/stream"))
                 .header("Content-Type", "application/json")
                 .header("Authorization", "Bearer " + config.authToken)
+                .header("X-Mod-Version", B2TMapperMod.MOD_VERSION)
                 .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
                 .build();
 

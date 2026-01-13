@@ -1,5 +1,6 @@
 package com.b2tmapper.client;
 
+import com.b2tmapper.B2TMapperMod;
 import com.b2tmapper.config.ModConfig;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
@@ -125,6 +126,7 @@ public class LiveViewBroadcaster {
                 .uri(URI.create(API_BASE + "/live-view/update"))
                 .header("Content-Type", "application/json")
                 .header("Authorization", "Bearer " + config.authToken)
+                .header("X-Mod-Version", B2TMapperMod.MOD_VERSION)
                 .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
                 .build();
             
@@ -156,6 +158,7 @@ public class LiveViewBroadcaster {
                 .uri(URI.create(API_BASE + "/live-view/update"))
                 .header("Content-Type", "application/json")
                 .header("Authorization", "Bearer " + config.authToken)
+                .header("X-Mod-Version", B2TMapperMod.MOD_VERSION)
                 .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
                 .build();
             

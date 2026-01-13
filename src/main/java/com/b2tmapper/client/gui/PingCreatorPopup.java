@@ -1,5 +1,6 @@
 package com.b2tmapper.client.gui;
 
+import com.b2tmapper.B2TMapperMod;
 import com.b2tmapper.config.ModConfig;
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
@@ -185,6 +186,7 @@ public class PingCreatorPopup extends BasePopup {
                 HttpRequest request = HttpRequest.newBuilder()
                         .uri(URI.create(API_BASE + "/auth/mod-session"))
                         .header("Authorization", "Bearer " + config.authToken)
+                        .header("X-Mod-Version", B2TMapperMod.MOD_VERSION)
                         .GET()
                         .build();
                 
@@ -429,6 +431,7 @@ public class PingCreatorPopup extends BasePopup {
                         .uri(URI.create(API_BASE + "/mod/pings/submit"))
                         .header("Content-Type", "application/json")
                         .header("Authorization", "Bearer " + config.authToken)
+                        .header("X-Mod-Version", B2TMapperMod.MOD_VERSION)
                         .POST(HttpRequest.BodyPublishers.ofString(gson.toJson(body)))
                         .build();
                 
