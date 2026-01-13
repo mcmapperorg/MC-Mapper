@@ -1,7 +1,6 @@
 package com.b2tmapper.client.gui;
 
 import com.b2tmapper.client.LiveViewBroadcaster;
-import com.b2tmapper.client.MapStreamingService;
 import com.b2tmapper.config.ModConfig;
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
@@ -61,7 +60,6 @@ public class LiveViewPopup extends Screen {
             try {
                 servers.clear();
 
-                // Load public servers (no auth required)
                 HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(API_BASE + "/servers"))
                     .GET()
@@ -92,7 +90,6 @@ public class LiveViewPopup extends Screen {
                     error = "HTTP " + response.statusCode();
                 }
 
-                // Also load private servers if logged in
                 String authToken = ModConfig.get().authToken;
                 if (authToken != null && !authToken.isEmpty()) {
                     try {
@@ -139,7 +136,6 @@ public class LiveViewPopup extends Screen {
                             }
                         }
                     } catch (Exception e) {
-                        // Ignore private server errors
                     }
                 }
 
@@ -160,17 +156,14 @@ public class LiveViewPopup extends Screen {
         popupX = (width - popupWidth) / 2;
         popupY = (height - popupHeight) / 2;
 
-        // Back button
         addDrawableChild(ButtonWidget.builder(
             Text.literal("Back"),
             button -> close()
         ).dimensions(popupX + popupWidth/2 - 40, popupY + popupHeight - 30, 80, 20).build());
     }
 
-    // Override to disable Minecraft 1.21's blur effect
     @Override
     protected void applyBlur(float delta) {
-        // Don't apply blur
     }
 
     @Override
@@ -180,25 +173,21 @@ public class LiveViewPopup extends Screen {
         context.fill(popupX, popupY, popupX + popupWidth, popupY + popupHeight, GREEN_BG());
         drawBorder(context, popupX, popupY, popupWidth, popupHeight, GREEN_BORDER());
 
-        String title = "Live View & Streaming";
+        String title = "Live View";
         int titleX = popupX + (popupWidth - textRenderer.getWidth(title)) / 2;
         context.drawTextWithShadow(textRenderer, title, titleX, popupY + 10, WHITE);
 
         ModConfig config = ModConfig.get();
         
-        // Status
-        String status = config.liveViewEnabled ? "Live View: Active" : "Live View: Inactive";
+        String status = config.liveViewEnabled ? "Status: Active" : "Status: Inactive";
         int statusColor = config.liveViewEnabled ? GREEN : GRAY;
         context.drawTextWithShadow(textRenderer, status, popupX + 20, popupY + 30, statusColor);
 
-        // Current server
         String serverText = "Server: " + (config.liveViewServerName != null ? config.liveViewServerName : "None");
         context.drawTextWithShadow(textRenderer, serverText, popupX + 20, popupY + 45, GRAY);
 
-        // Instructions
         context.drawTextWithShadow(textRenderer, "Select a server to enable:", popupX + 20, popupY + 65, WHITE);
 
-        // Server list
         int listY = popupY + 80;
         if (loading) {
             context.drawTextWithShadow(textRenderer, "Loading...", popupX + 20, listY, GRAY);
@@ -248,28 +237,18 @@ public class LiveViewPopup extends Screen {
     private void selectServer(ServerInfo server) {
         ModConfig config = ModConfig.get();
         
-        // Set Live View
         config.liveViewEnabled = true;
         config.liveViewServerId = server.id;
         config.liveViewServerName = server.name;
         
-        // Also set Streaming server
-        config.streamingServerId = server.id;
-        config.streamingServerName = server.name;
-        config.streamingServerAddress = server.address;
-        config.streamingEnabled = true;
-        
         ModConfig.save();
         
-        // Start services
         LiveViewBroadcaster.start();
-        MapStreamingService.start();
         
-        // Notify
         MinecraftClient client = MinecraftClient.getInstance();
         if (client.player != null) {
             client.player.sendMessage(
-                Text.literal("§aLive View & Mapping enabled for " + server.name),
+                Text.literal("§aLive View enabled for " + server.name),
                 false
             );
         }

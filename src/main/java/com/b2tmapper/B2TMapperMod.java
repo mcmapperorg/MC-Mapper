@@ -14,7 +14,9 @@ import org.lwjgl.glfw.GLFW;
 import com.b2tmapper.util.PingExporter;
 import com.b2tmapper.client.LiveViewBroadcaster;
 import com.b2tmapper.client.MapStreamingService;
+import com.b2tmapper.client.MapArtExporter;
 import com.b2tmapper.client.gui.MenuBarScreen;
+import com.b2tmapper.client.gui.PingCreatorPopup;
 import com.b2tmapper.client.ping.TrackedPingRenderer;
 import com.b2tmapper.client.ping.TrackedPingManager;
 import com.b2tmapper.config.ModConfig;
@@ -22,11 +24,12 @@ import com.b2tmapper.config.ModConfig;
 public class B2TMapperMod implements ClientModInitializer {
 
     public static final String MOD_ID = "b2t-mapper";
-    public static final String MOD_VERSION = "2.0.0";
+    public static final String MOD_VERSION = "1.0.1";
 
     private static KeyBinding pingKeyBinding;
     private static KeyBinding hideUiKey;
     private static KeyBinding menuKeyBinding;
+    private static KeyBinding exportMapArtKey;
 
     public static boolean hideModUI = false;
 
@@ -35,22 +38,18 @@ public class B2TMapperMod implements ClientModInitializer {
 
         ModConfig.load();
         
-        // Initialize services
         LiveViewBroadcaster.initialize();
         MapStreamingService.initialize();
 
-        // Register Mapping Status HUD (top center) and Tracked Pings HUD
         HudRenderCallback.EVENT.register((context, tickCounter) -> {
-            if (!hideModUI) {
+            if (!isUiHidden()) {
                 renderMappingStatusHud(context);
-                // Render tracked pings HUD (bottom left)
                 if (ModConfig.get().showPingBeacons) {
                     TrackedPingRenderer.get().renderHUD(context, tickCounter.getTickDelta(true));
                 }
             }
         });
 
-        // Ping key (P)
         pingKeyBinding = KeyBindingHelper.registerKeyBinding(new KeyBinding(
                 "key.b2tmapper.ping",
                 InputUtil.Type.KEYSYM,
@@ -58,7 +57,6 @@ public class B2TMapperMod implements ClientModInitializer {
                 "category.b2tmapper"
         ));
 
-        // Hide UI key (H)
         hideUiKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
                 "key.b2tmapper.hide_ui",
                 InputUtil.Type.KEYSYM,
@@ -66,7 +64,6 @@ public class B2TMapperMod implements ClientModInitializer {
                 "category.b2tmapper"
         ));
 
-        // Menu key (Right Shift)
         menuKeyBinding = KeyBindingHelper.registerKeyBinding(new KeyBinding(
                 "key.b2tmapper.menu",
                 InputUtil.Type.KEYSYM,
@@ -74,17 +71,23 @@ public class B2TMapperMod implements ClientModInitializer {
                 "category.b2tmapper"
         ));
 
-        // Client tick handler
+        exportMapArtKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+                "key.b2tmapper.export_mapart",
+                InputUtil.Type.KEYSYM,
+                GLFW.GLFW_KEY_RIGHT_ALT,
+                "category.b2tmapper"
+        ));
+
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             PingExporter.tickScreenshot();
+            PingCreatorPopup.tickScreenshot();
 
             if (client.player == null || client.world == null) {
                 return;
             }
 
-            // Handle key presses
             if (pingKeyBinding.wasPressed()) {
-                PingExporter.exportPing();
+                PingCreatorPopup.startDelayedCapture();
             }
 
             if (hideUiKey.wasPressed()) {
@@ -96,11 +99,14 @@ public class B2TMapperMod implements ClientModInitializer {
             if (menuKeyBinding.wasPressed()) {
                 client.setScreen(new MenuBarScreen());
             }
+
+            if (exportMapArtKey.wasPressed()) {
+                MapArtExporter.tryExport();
+            }
         });
 
-        // World render for ping beacons
         WorldRenderEvents.AFTER_TRANSLUCENT.register(context -> {
-            if (!hideModUI && ModConfig.get().showPingBeacons) {
+            if (!isUiHidden() && ModConfig.get().showPingBeacons) {
                 MinecraftClient client = MinecraftClient.getInstance();
                 TrackedPingRenderer.get().renderWorld(
                     context.matrixStack(),
@@ -112,9 +118,6 @@ public class B2TMapperMod implements ClientModInitializer {
         });
     }
 
-    /**
-     * Render "Mapping Active" status in top center when streaming is enabled
-     */
     private void renderMappingStatusHud(DrawContext context) {
         ModConfig config = ModConfig.get();
         
@@ -133,36 +136,33 @@ public class B2TMapperMod implements ClientModInitializer {
         int statusColor;
         
         if (MapStreamingService.isRunning()) {
-            if (MapStreamingService.isInSafeZone()) {
+            if (!MapStreamingService.isInOverworld()) {
+                statusText = "⚠ Mapping Paused (Overworld Only)";
+                statusColor = 0xFFFFAA00;
+            } else if (MapStreamingService.isInSafeZone()) {
                 statusText = "⚠ Mapping Paused (Safe Zone)";
-                statusColor = 0xFFFFAA00; // Orange
+                statusColor = 0xFFFFAA00;
             } else {
                 statusText = "● Mapping Active";
-                statusColor = 0xFF44FF44; // Green
+                statusColor = 0xFF44FF44;
             }
         } else {
             statusText = "○ Mapping Ready";
-            statusColor = 0xFF888888; // Gray
+            statusColor = 0xFF888888;
         }
         
         int textWidth = client.textRenderer.getWidth(statusText);
         int x = (screenWidth - textWidth) / 2;
         int y = 5;
         
-        // Background
         context.fill(x - 4, y - 2, x + textWidth + 4, y + 11, 0xAA000000);
-        
-        // Text
         context.drawTextWithShadow(client.textRenderer, statusText, x, y, statusColor);
     }
 
     public static boolean isUiHidden() {
-        return hideModUI || PingExporter.suppressHudRendering;
+        return hideModUI || PingExporter.suppressHudRendering || PingCreatorPopup.shouldSuppressHud();
     }
     
-    /**
-     * Get the current server address the player is connected to
-     */
     public static String getCurrentServerAddress() {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client.getCurrentServerEntry() != null) {

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "b2tmapper",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "MC Mapper",
   "description": "Secure map exporter for 2b2t with cryptographic verification",
   "authors": [

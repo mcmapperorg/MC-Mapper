@@ -37,6 +37,7 @@ public class MapStreamingService {
     private static ScheduledFuture<?> secretRefreshTask;
     private static boolean isRunning = false;
     private static boolean inSafeZone = false;
+    private static boolean inOverworld = true;
     private static boolean eventsRegistered = false;
 
     private static String streamingSecret = null;
@@ -68,6 +69,11 @@ public class MapStreamingService {
 
     private static void processChunkImmediate(World world, WorldChunk chunk, ModConfig config) {
         try {
+            String dimension = world.getRegistryKey().getValue().toString();
+            if (!dimension.equals("minecraft:overworld")) {
+                return;
+            }
+            
             int chunkX = chunk.getPos().x;
             int chunkZ = chunk.getPos().z;
             int baseX = chunkX * 16;
@@ -270,6 +276,10 @@ public class MapStreamingService {
         return inSafeZone;
     }
 
+    public static boolean isInOverworld() {
+        return inOverworld;
+    }
+
     private static boolean isInSafeZone(int x, int z) {
         ModConfig config = ModConfig.get();
         if (!config.safeZoneEnabled || config.safeZoneRadius <= 0) {
@@ -282,7 +292,13 @@ public class MapStreamingService {
     private static void streamPendingGrids() {
         try {
             MinecraftClient client = MinecraftClient.getInstance();
-            if (client.player == null) {
+            if (client.player == null || client.world == null) {
+                return;
+            }
+
+            String dimension = client.world.getRegistryKey().getValue().toString();
+            inOverworld = dimension.equals("minecraft:overworld");
+            if (!inOverworld) {
                 return;
             }
 
