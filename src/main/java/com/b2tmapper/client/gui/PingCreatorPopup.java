@@ -3,7 +3,9 @@ package com.b2tmapper.client.gui;
 import com.b2tmapper.B2TMapperMod;
 import com.b2tmapper.config.ModConfig;
 import com.google.gson.Gson;
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import net.minecraft.block.BlockState;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gl.Framebuffer;
 import net.minecraft.client.gui.DrawContext;
@@ -13,8 +15,11 @@ import net.minecraft.client.network.ServerInfo;
 import net.minecraft.client.texture.NativeImage;
 import net.minecraft.client.texture.NativeImageBackedTexture;
 import net.minecraft.client.util.ScreenshotRecorder;
+import net.minecraft.registry.Registries;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
+import net.minecraft.util.math.BlockPos;
+import net.minecraft.world.World;
 
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
@@ -25,7 +30,9 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.Base64;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
@@ -36,6 +43,11 @@ public class PingCreatorPopup extends BasePopup {
     private static final String[] PING_TYPES = {"info", "danger", "landmark", "personal", "private"};
     private static final String[] PING_LABELS = {"Info", "Danger", "Landmark", "Personal", "Private"};
     private static final int[] PING_COLORS = {0xFF4444FF, 0xFFFF4444, 0xFFFFD700, 0xFF44FF44, 0xFFAA44FF};
+    
+    private static final int CAPTURE_RADIUS_X = 96;
+    private static final int CAPTURE_RADIUS_Z = 96;
+    private static final int CAPTURE_HEIGHT_UP = 128;
+    private static final int CAPTURE_HEIGHT_DOWN = 256;
     
     private int selectedType = 0;
     private int hoveredType = -1;
@@ -70,6 +82,9 @@ public class PingCreatorPopup extends BasePopup {
     private static boolean pendingScreenshot = false;
     private static int screenshotDelayFrames = 0;
     private static boolean suppressHud = false;
+    
+    private static List<int[]> capturedBlocks = null;
+    private static String[] blockPalette = null;
 
     public PingCreatorPopup(Screen parent, BufferedImage screenshot) {
         super(parent, "Create Ping");
@@ -97,6 +112,8 @@ public class PingCreatorPopup extends BasePopup {
         suppressHud = false;
         
         BufferedImage screenshot = captureScreenshotNow();
+        capture3DBlocks();
+        
         if (screenshot != null) {
             MinecraftClient client = MinecraftClient.getInstance();
             client.execute(() -> {
@@ -108,6 +125,98 @@ public class PingCreatorPopup extends BasePopup {
                 client.player.sendMessage(Text.literal("§cFailed to capture screenshot"), false);
             }
         }
+    }
+    
+    private static void capture3DBlocks() {
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client.player == null || client.world == null) {
+            capturedBlocks = null;
+            blockPalette = null;
+            return;
+        }
+        
+        World world = client.world;
+        BlockPos playerPos = client.player.getBlockPos();
+        
+        int minX = playerPos.getX() - CAPTURE_RADIUS_X;
+        int maxX = playerPos.getX() + CAPTURE_RADIUS_X;
+        int minY = Math.max(world.getBottomY(), playerPos.getY() - CAPTURE_HEIGHT_DOWN);
+        int maxY = Math.min(world.getTopY(), playerPos.getY() + CAPTURE_HEIGHT_UP);
+        int minZ = playerPos.getZ() - CAPTURE_RADIUS_Z;
+        int maxZ = playerPos.getZ() + CAPTURE_RADIUS_Z;
+        
+        List<int[]> blocks = new ArrayList<>();
+        List<String> palette = new ArrayList<>();
+        
+        int originX = playerPos.getX();
+        int originY = playerPos.getY();
+        int originZ = playerPos.getZ();
+        
+        BlockPos.Mutable mutablePos = new BlockPos.Mutable();
+        BlockPos.Mutable neighborPos = new BlockPos.Mutable();
+        
+        for (int x = minX; x <= maxX; x++) {
+            for (int y = minY; y <= maxY; y++) {
+                for (int z = minZ; z <= maxZ; z++) {
+                    mutablePos.set(x, y, z);
+                    BlockState state = world.getBlockState(mutablePos);
+                    
+                    if (state.isAir()) continue;
+                    
+                    boolean hasAirNeighbor = false;
+                    
+                    neighborPos.set(x + 1, y, z);
+                    if (world.getBlockState(neighborPos).isAir()) hasAirNeighbor = true;
+                    
+                    if (!hasAirNeighbor) {
+                        neighborPos.set(x - 1, y, z);
+                        if (world.getBlockState(neighborPos).isAir()) hasAirNeighbor = true;
+                    }
+                    
+                    if (!hasAirNeighbor) {
+                        neighborPos.set(x, y + 1, z);
+                        if (world.getBlockState(neighborPos).isAir()) hasAirNeighbor = true;
+                    }
+                    
+                    if (!hasAirNeighbor) {
+                        neighborPos.set(x, y - 1, z);
+                        if (world.getBlockState(neighborPos).isAir()) hasAirNeighbor = true;
+                    }
+                    
+                    if (!hasAirNeighbor) {
+                        neighborPos.set(x, y, z + 1);
+                        if (world.getBlockState(neighborPos).isAir()) hasAirNeighbor = true;
+                    }
+                    
+                    if (!hasAirNeighbor) {
+                        neighborPos.set(x, y, z - 1);
+                        if (world.getBlockState(neighborPos).isAir()) hasAirNeighbor = true;
+                    }
+                    
+                    if (!hasAirNeighbor) continue;
+                    
+                    String blockName = Registries.BLOCK.getId(state.getBlock()).getPath();
+                    
+                    int paletteIndex = palette.indexOf(blockName);
+                    if (paletteIndex == -1) {
+                        paletteIndex = palette.size();
+                        palette.add(blockName);
+                    }
+                    
+                    blocks.add(new int[]{
+                        x - originX,
+                        y - originY,
+                        z - originZ,
+                        paletteIndex
+                    });
+                }
+            }
+        }
+        
+        capturedBlocks = blocks;
+        blockPalette = palette.toArray(new String[0]);
+        
+        System.out.println("[MCMapper] Captured " + blocks.size() + " blocks with " + palette.size() + " unique types");
     }
     
     public static boolean shouldSuppressHud() {
@@ -219,83 +328,81 @@ public class PingCreatorPopup extends BasePopup {
     @Override
     protected void init() {
         super.init();
-        popupWidth = 340;
-        popupHeight = 320;
-        popupX = (width - popupWidth) / 2;
-        popupY = (height - popupHeight) / 2;
         
-        int fieldWidth = popupWidth - padding * 2 - 10;
-        int fieldX = popupX + padding + 5;
-        int fieldY = popupY + headerHeight + 130;
+        this.popupWidth = 380;
+        this.popupX = (width - popupWidth) / 2;
+        this.popupHeight = 340;
+        this.popupY = (height - popupHeight) / 2;
+        int contentX = this.popupX + 15;
+        int contentWidth = this.popupWidth - 30;
         
-        descriptionField = new TextFieldWidget(textRenderer, fieldX, fieldY, fieldWidth, 20, Text.literal("Description"));
+        descriptionField = new TextFieldWidget(
+            textRenderer,
+            contentX,
+            0,
+            contentWidth,
+            20,
+            Text.literal("Description")
+        );
         descriptionField.setMaxLength(500);
-        descriptionField.setPlaceholder(Text.literal("Describe this location..."));
+        descriptionField.setPlaceholder(Text.literal("Add a description..."));
         addDrawableChild(descriptionField);
         
         if (screenshot != null) {
-            createScreenshotTexture();
-            encodeScreenshotBase64();
-        }
-    }
-    
-    private void createScreenshotTexture() {
-        try {
-            int width = screenshot.getWidth();
-            int height = screenshot.getHeight();
-            
-            NativeImage nativeImage = new NativeImage(width, height, false);
-            for (int y = 0; y < height; y++) {
-                for (int x = 0; x < width; x++) {
-                    int argb = screenshot.getRGB(x, y);
-                    int a = (argb >> 24) & 0xFF;
-                    int r = (argb >> 16) & 0xFF;
-                    int g = (argb >> 8) & 0xFF;
-                    int b = argb & 0xFF;
-                    nativeImage.setColor(x, y, (a << 24) | (b << 16) | (g << 8) | r);
+            try {
+                ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                ImageIO.write(screenshot, "png", baos);
+                screenshotBase64 = Base64.getEncoder().encodeToString(baos.toByteArray());
+                
+                NativeImage nativeImg = new NativeImage(screenshot.getWidth(), screenshot.getHeight(), false);
+                for (int y = 0; y < screenshot.getHeight(); y++) {
+                    for (int x = 0; x < screenshot.getWidth(); x++) {
+                        int argb = screenshot.getRGB(x, y);
+                        int a = (argb >> 24) & 0xFF;
+                        int r = (argb >> 16) & 0xFF;
+                        int g = (argb >> 8) & 0xFF;
+                        int b = argb & 0xFF;
+                        nativeImg.setColor(x, y, (a << 24) | (b << 16) | (g << 8) | r);
+                    }
                 }
+                screenshotTexture = new NativeImageBackedTexture(nativeImg);
+                screenshotTextureId = MinecraftClient.getInstance().getTextureManager()
+                    .registerDynamicTexture("ping_preview", screenshotTexture);
+            } catch (Exception e) {
+                e.printStackTrace();
             }
-            
-            screenshotTexture = new NativeImageBackedTexture(nativeImage);
-            screenshotTextureId = Identifier.of("b2tmapper", "ping_screenshot_" + UUID.randomUUID().toString().substring(0, 8));
-            MinecraftClient.getInstance().getTextureManager().registerTexture(screenshotTextureId, screenshotTexture);
-            
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
-    
-    private void encodeScreenshotBase64() {
-        try {
-            ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            ImageIO.write(screenshot, "PNG", baos);
-            screenshotBase64 = Base64.getEncoder().encodeToString(baos.toByteArray());
-        } catch (Exception e) {
-            e.printStackTrace();
         }
     }
     
     @Override
     protected void renderContent(DrawContext context, int mouseX, int mouseY, float delta) {
-        int contentX = popupX + padding;
-        int contentY = popupY + headerHeight + padding;
+        int contentX = this.popupX + 15;
+        int contentY = popupY + 35;
         
         if (screenshotTextureId != null) {
             int previewWidth = 160;
             int previewHeight = 90;
-            int previewX = contentX + (popupWidth - padding * 2 - previewWidth) / 2;
+            int previewX = popupX + (popupWidth - previewWidth) / 2;
             
-            context.fill(previewX - 2, contentY - 2, previewX + previewWidth + 2, contentY + previewHeight + 2, GREEN_BORDER());
+            context.fill(previewX - 2, contentY - 2, previewX + previewWidth + 2, contentY + previewHeight + 2, 0xFF333333);
             context.drawTexture(screenshotTextureId, previewX, contentY, 0, 0, previewWidth, previewHeight, previewWidth, previewHeight);
-        } else {
-            context.drawCenteredTextWithShadow(textRenderer, "No screenshot", popupX + popupWidth / 2, contentY + 40, GRAY);
+            contentY += previewHeight + 8;
         }
         
-        contentY += 100;
+        descriptionField.setY(contentY);
+        contentY += 28;
         
-        String coordsText = String.format("Location: %d, %d, %d (Grid: %d, %d)", 
+        String coordsText = String.format("Position: %d, %d, %d | Grid: %d, %d", 
             (int) exactX, (int) exactY, (int) exactZ, gridX, gridZ);
         context.drawCenteredTextWithShadow(textRenderer, coordsText, popupX + popupWidth / 2, contentY, GRAY);
+        
+        contentY += 12;
+        if (capturedBlocks != null && capturedBlocks.size() > 0) {
+            String blocks3dText = String.format("§a3D Scene: %d blocks captured", capturedBlocks.size());
+            context.drawCenteredTextWithShadow(textRenderer, blocks3dText, popupX + popupWidth / 2, contentY, 0xFF44FF44);
+        } else {
+            context.drawCenteredTextWithShadow(textRenderer, "§73D Scene: No blocks captured", popupX + popupWidth / 2, contentY, GRAY);
+        }
         
         contentY += 18;
         contentY += 28;
@@ -304,9 +411,9 @@ public class PingCreatorPopup extends BasePopup {
         contentY += 14;
         
         hoveredType = -1;
-        int btnWidth = 60;
-        int btnHeight = 22;
-        int spacing = 4;
+        int btnWidth = 64;
+        int btnHeight = 24;
+        int spacing = 5;
         int totalWidth = (btnWidth * 5) + (spacing * 4);
         int startX = contentX + (popupWidth - padding * 2 - totalWidth) / 2;
         
@@ -335,10 +442,10 @@ public class PingCreatorPopup extends BasePopup {
             String label = PING_LABELS[i];
             int textColor = hasCredits ? PING_COLORS[i] : 0xFF666666;
             int textX = btnX + (btnWidth - textRenderer.getWidth(label)) / 2;
-            context.drawTextWithShadow(textRenderer, label, textX, contentY + 4, textColor);
+            context.drawTextWithShadow(textRenderer, label, textX, contentY + 5, textColor);
             
             String creditStr = String.valueOf(credits[i]);
-            context.drawCenteredTextWithShadow(textRenderer, creditStr, btnX + btnWidth / 2, contentY + 13, hasCredits ? WHITE : 0xFF666666);
+            context.drawCenteredTextWithShadow(textRenderer, creditStr, btnX + btnWidth / 2, contentY + 14, hasCredits ? WHITE : 0xFF666666);
         }
         
         contentY += btnHeight + 12;
@@ -356,8 +463,8 @@ public class PingCreatorPopup extends BasePopup {
         
         contentY += 8;
         
-        int actionBtnWidth = 100;
-        int actionBtnHeight = 26;
+        int actionBtnWidth = 120;
+        int actionBtnHeight = 28;
         int actionSpacing = 20;
         int actionStartX = popupX + (popupWidth - actionBtnWidth * 2 - actionSpacing) / 2;
         
@@ -369,7 +476,7 @@ public class PingCreatorPopup extends BasePopup {
         context.fill(actionStartX, contentY, actionStartX + actionBtnWidth, contentY + actionBtnHeight, submitBg);
         drawBorder(context, actionStartX, contentY, actionBtnWidth, actionBtnHeight, canSubmit ? 0xFF44FF44 : 0xFF666666);
         String submitText = isSubmitting ? "Submitting..." : "Submit Ping";
-        context.drawCenteredTextWithShadow(textRenderer, submitText, actionStartX + actionBtnWidth / 2, contentY + 9, canSubmit ? WHITE : 0xFF666666);
+        context.drawCenteredTextWithShadow(textRenderer, submitText, actionStartX + actionBtnWidth / 2, contentY + 10, canSubmit ? WHITE : 0xFF666666);
         
         int cancelX = actionStartX + actionBtnWidth + actionSpacing;
         cancelHovered = !isSubmitting && mouseX >= cancelX && mouseX < cancelX + actionBtnWidth 
@@ -378,7 +485,7 @@ public class PingCreatorPopup extends BasePopup {
         int cancelBg = cancelHovered ? 0x66663333 : 0x44442222;
         context.fill(cancelX, contentY, cancelX + actionBtnWidth, contentY + actionBtnHeight, cancelBg);
         drawBorder(context, cancelX, contentY, actionBtnWidth, actionBtnHeight, 0xFF664444);
-        context.drawCenteredTextWithShadow(textRenderer, "Cancel", cancelX + actionBtnWidth / 2, contentY + 9, WHITE);
+        context.drawCenteredTextWithShadow(textRenderer, "Cancel", cancelX + actionBtnWidth / 2, contentY + 10, WHITE);
     }
     
     @Override
@@ -427,6 +534,23 @@ public class PingCreatorPopup extends BasePopup {
                 body.addProperty("playerUuid", playerUuid);
                 body.addProperty("timestamp", LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME));
                 
+                if (capturedBlocks != null && capturedBlocks.size() > 0 && blockPalette != null) {
+                    JsonObject scene3dData = new JsonObject();
+                    
+                    JsonArray blocksArray = new JsonArray();
+                    for (int[] block : capturedBlocks) {
+                        JsonArray blockData = new JsonArray();
+                        blockData.add(block[0]);
+                        blockData.add(block[1]);
+                        blockData.add(block[2]);
+                        blockData.add(blockPalette[block[3]]);
+                        blocksArray.add(blockData);
+                    }
+                    scene3dData.add("blocks", blocksArray);
+                    
+                    body.add("scene3dData", scene3dData);
+                }
+                
                 HttpRequest request = HttpRequest.newBuilder()
                         .uri(URI.create(API_BASE + "/mod/pings/submit"))
                         .header("Content-Type", "application/json")
@@ -440,6 +564,9 @@ public class PingCreatorPopup extends BasePopup {
                 
                 if (response.statusCode() == 200 && json.get("success").getAsBoolean()) {
                     statusMessage = "Ping submitted for approval!";
+                    
+                    capturedBlocks = null;
+                    blockPalette = null;
                     
                     MinecraftClient client = MinecraftClient.getInstance();
                     if (client.player != null) {
