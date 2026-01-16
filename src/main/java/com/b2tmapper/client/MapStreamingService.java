@@ -6,6 +6,8 @@ import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientChunkEvents;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.MapColor;
 import net.minecraft.client.MinecraftClient;
@@ -15,11 +17,14 @@ import net.minecraft.world.World;
 import net.minecraft.world.chunk.WorldChunk;
 
 import java.net.URI;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -31,6 +36,8 @@ public class MapStreamingService {
     private static final String API_BASE = "https://mc-mapper-production.up.railway.app/api";
     private static final int STREAM_INTERVAL_MS = 10000;
     private static final int SECRET_REFRESH_MS = 4 * 60 * 60 * 1000;
+    private static final long START_RETRY_COOLDOWN_MS = 30000;
+    private static final long CONNECTION_DELAY_MS = 25000;
 
     private static ScheduledExecutorService scheduler;
     private static ScheduledFuture<?> streamTask;
@@ -42,38 +49,127 @@ public class MapStreamingService {
 
     private static String streamingSecret = null;
     private static long secretFetchedAt = 0;
+    private static long lastStartAttempt = 0;
+    private static long connectionTime = 0;
 
+    private static int detectedServerId = -1;
+    private static String detectedServerName = null;
+    private static String detectedServerAddress = null;
+    private static String lastConnectedServer = null;
+    private static int tickCounter = 0;
+
+    private static final Set<String> serverVerifiedChunks = ConcurrentHashMap.newKeySet();
     private static final HttpClient httpClient = HttpClient.newHttpClient();
     private static final Gson gson = new Gson();
-
     private static final ConcurrentHashMap<String, int[]> gridData = new ConcurrentHashMap<>();
     private static final Map<String, Integer> lastSentCompletion = new HashMap<>();
 
     private static int lastPlayerGridX = Integer.MIN_VALUE;
     private static int lastPlayerGridZ = Integer.MIN_VALUE;
 
+    public static void markChunkAsServerVerified(int chunkX, int chunkZ) {
+        String key = chunkX + "," + chunkZ;
+        serverVerifiedChunks.add(key);
+    }
+
+    private static boolean isChunkServerVerified(int chunkX, int chunkZ) {
+        String key = chunkX + "," + chunkZ;
+        return serverVerifiedChunks.contains(key);
+    }
+
     public static void registerEvents() {
         if (eventsRegistered) return;
+        eventsRegistered = true;
 
         ClientChunkEvents.CHUNK_LOAD.register((world, chunk) -> {
             if (!isRunning) return;
-            
+
             ModConfig config = ModConfig.get();
             if (!config.streamingEnabled) return;
+
+            String currentServer = B2TMapperMod.getCurrentServerAddress();
+            if (currentServer == null || currentServer.isEmpty()) {
+                return;
+            }
+            
+            if (detectedServerAddress != null && !detectedServerAddress.isEmpty()) {
+                if (!serverAddressMatches(currentServer, detectedServerAddress)) {
+                    return;
+                }
+            }
+
+            int chunkX = chunk.getPos().x;
+            int chunkZ = chunk.getPos().z;
+
+            long timeSinceConnection = System.currentTimeMillis() - connectionTime;
+            if (timeSinceConnection < CONNECTION_DELAY_MS) {
+                return;
+            }
+
+            if (!serverVerifiedChunks.isEmpty() && !isChunkServerVerified(chunkX, chunkZ)) {
+                return;
+            }
 
             processChunkImmediate(world, chunk, config);
         });
 
-        eventsRegistered = true;
+        ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
+            System.out.println("[MCMapper] Connected to server - clearing all cached data");
+            System.out.println("[MCMapper] Starting 25 second delay to filter Baritone cache...");
+            connectionTime = System.currentTimeMillis();
+            clearData();
+        });
+
+        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
+            System.out.println("[MCMapper] Disconnected - stopping streaming");
+            stop();
+            clearData();
+        });
+
+        ClientTickEvents.END_CLIENT_TICK.register(client -> {
+            tickCounter++;
+            if (tickCounter % 40 != 0) return;
+
+            if (client.player == null || client.world == null) return;
+
+            ModConfig config = ModConfig.get();
+
+            if (connectionTime > 0 && isRunning) {
+                long timeSinceConnection = System.currentTimeMillis() - connectionTime;
+                if (timeSinceConnection >= CONNECTION_DELAY_MS && timeSinceConnection < CONNECTION_DELAY_MS + 2000) {
+                    client.player.sendMessage(
+                        net.minecraft.text.Text.literal("§a[MCMapper] Delay complete - now capturing chunks"),
+                        true
+                    );
+                }
+            }
+
+            if (config.streamingEnabled && !isRunning) {
+                long now = System.currentTimeMillis();
+                if (now - lastStartAttempt >= START_RETRY_COOLDOWN_MS) {
+                    lastStartAttempt = now;
+                    start();
+                }
+            }
+
+            if (!config.streamingEnabled && isRunning) {
+                stop();
+            }
+        });
+
+        System.out.println("[MCMapper] Events registered (with 25s connection delay)");
     }
 
     private static void processChunkImmediate(World world, WorldChunk chunk, ModConfig config) {
         try {
+            int serverId = getActiveServerId();
+            if (serverId <= 0) return;
+
             String dimension = world.getRegistryKey().getValue().toString();
             if (!dimension.equals("minecraft:overworld")) {
                 return;
             }
-            
+
             int chunkX = chunk.getPos().x;
             int chunkZ = chunk.getPos().z;
             int baseX = chunkX * 16;
@@ -82,7 +178,7 @@ public class MapStreamingService {
             if (config.safeZoneEnabled && config.safeZoneRadius > 0) {
                 int centerX = baseX + 8;
                 int centerZ = baseZ + 8;
-                if (isInSafeZone(centerX, centerZ)) {
+                if (isInSafeZoneCheck(centerX, centerZ)) {
                     return;
                 }
             }
@@ -93,7 +189,7 @@ public class MapStreamingService {
                     int z = baseZ + dz;
 
                     if (config.safeZoneEnabled && config.safeZoneRadius > 0) {
-                        if (isInSafeZone(x, z)) {
+                        if (isInSafeZoneCheck(x, z)) {
                             continue;
                         }
                     }
@@ -116,6 +212,7 @@ public class MapStreamingService {
                 }
             }
         } catch (Exception e) {
+            System.out.println("[MCMapper] Chunk processing error: " + e.getMessage());
         }
     }
 
@@ -136,13 +233,13 @@ public class MapStreamingService {
 
             int shade = 2;
 
-            if (mapColor.id == 12) {
+            if (mapColor == MapColor.WATER_BLUE) {
                 int waterDepth = 0;
                 BlockPos checkPos = pos;
                 while (checkPos.getY() > world.getBottomY() && waterDepth < 20) {
                     BlockState checkState = chunk.getBlockState(checkPos);
                     MapColor checkColor = checkState.getMapColor(world, checkPos);
-                    if (checkColor == null || checkColor.id != 12) break;
+                    if (checkColor != MapColor.WATER_BLUE) break;
                     waterDepth++;
                     checkPos = checkPos.down();
                 }
@@ -160,18 +257,21 @@ public class MapStreamingService {
         }
     }
 
-    public static boolean fetchStreamingCredentials() {
+    private static boolean detectStreamingServer() {
         try {
-            ModConfig config = ModConfig.get();
-            if (config.authToken == null || config.authToken.isEmpty()) {
-                return false;
-            }
-            if (config.streamingServerId <= 0) {
-                return false;
+            String serverAddress = B2TMapperMod.getCurrentServerAddress();
+            if (serverAddress == null || serverAddress.isEmpty()) {
+                serverAddress = "singleplayer";
             }
 
+            System.out.println("[MCMapper] Detecting server for address: " + serverAddress);
+            lastConnectedServer = serverAddress;
+
+            ModConfig config = ModConfig.get();
+            String encodedAddress = URLEncoder.encode(serverAddress, StandardCharsets.UTF_8);
+
             HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(API_BASE + "/servers/" + config.streamingServerId + "/streaming-credentials"))
+                .uri(URI.create(API_BASE + "/streaming/detect?address=" + encodedAddress))
                 .header("Authorization", "Bearer " + config.authToken)
                 .header("X-Mod-Version", B2TMapperMod.MOD_VERSION)
                 .GET()
@@ -181,13 +281,93 @@ public class MapStreamingService {
 
             if (response.statusCode() == 200) {
                 JsonObject json = gson.fromJson(response.body(), JsonObject.class);
-                if (json.get("success").getAsBoolean()) {
-                    streamingSecret = json.get("streaming_secret").getAsString();
-                    secretFetchedAt = System.currentTimeMillis();
+                if (json.has("success") && json.get("success").getAsBoolean()) {
+                    detectedServerId = json.get("server_id").getAsInt();
+                    detectedServerName = json.has("server_name") ? json.get("server_name").getAsString() : "Unknown";
+                    detectedServerAddress = json.has("server_address") ? json.get("server_address").getAsString() : serverAddress;
+
+                    if (json.has("streaming_secret") && !json.get("streaming_secret").isJsonNull()) {
+                        streamingSecret = json.get("streaming_secret").getAsString();
+                        secretFetchedAt = System.currentTimeMillis();
+                    }
+
+                    System.out.println("[MCMapper] Auto-detected: " + detectedServerName + " (ID: " + detectedServerId + ")");
+                    return true;
+                }
+            }
+
+            if (config.streamingServerId > 0 && !serverAddress.equalsIgnoreCase("singleplayer")) {
+                System.out.println("[MCMapper] Using manual config server ID: " + config.streamingServerId);
+                detectedServerId = config.streamingServerId;
+                detectedServerName = config.streamingServerName;
+                detectedServerAddress = config.streamingServerAddress;
+                return true;
+            }
+
+            if (serverAddress.equalsIgnoreCase("singleplayer")) {
+                System.out.println("[MCMapper] Singleplayer detected - no server configured, not streaming");
+            } else {
+                System.out.println("[MCMapper] No server detected and no manual config");
+            }
+            return false;
+
+        } catch (Exception e) {
+            System.out.println("[MCMapper] Detection error: " + e.getMessage());
+
+            String serverAddress = B2TMapperMod.getCurrentServerAddress();
+            if (serverAddress == null || serverAddress.isEmpty()) {
+                serverAddress = "singleplayer";
+            }
+            
+            ModConfig config = ModConfig.get();
+            if (config.streamingServerId > 0 && !serverAddress.equalsIgnoreCase("singleplayer")) {
+                detectedServerId = config.streamingServerId;
+                detectedServerName = config.streamingServerName;
+                detectedServerAddress = config.streamingServerAddress;
+                return true;
+            }
+            return false;
+        }
+    }
+
+    private static int getActiveServerId() {
+        if (detectedServerId > 0) return detectedServerId;
+        return ModConfig.get().streamingServerId;
+    }
+
+    public static boolean fetchStreamingCredentials() {
+        try {
+            ModConfig config = ModConfig.get();
+            if (config.authToken == null || config.authToken.isEmpty()) {
+                return false;
+            }
+
+            int serverId = getActiveServerId();
+            if (serverId <= 0) {
+                return false;
+            }
+
+            HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(API_BASE + "/servers/" + serverId + "/streaming-credentials"))
+                .header("Authorization", "Bearer " + config.authToken)
+                .header("X-Mod-Version", B2TMapperMod.MOD_VERSION)
+                .GET()
+                .build();
+
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+
+            if (response.statusCode() == 200) {
+                JsonObject json = gson.fromJson(response.body(), JsonObject.class);
+                if (json.has("success") && json.get("success").getAsBoolean()) {
+                    if (json.has("streaming_secret") && !json.get("streaming_secret").isJsonNull()) {
+                        streamingSecret = json.get("streaming_secret").getAsString();
+                        secretFetchedAt = System.currentTimeMillis();
+                    }
                     return true;
                 }
             }
         } catch (Exception e) {
+            System.out.println("[MCMapper] Credentials error: " + e.getMessage());
         }
         return false;
     }
@@ -197,6 +377,12 @@ public class MapStreamingService {
         return System.currentTimeMillis() - secretFetchedAt > SECRET_REFRESH_MS;
     }
 
+    private static void refreshSecretIfNeeded() {
+        if (secretNeedsRefresh()) {
+            fetchStreamingCredentials();
+        }
+    }
+
     public static void start() {
         if (isRunning) {
             return;
@@ -204,15 +390,17 @@ public class MapStreamingService {
 
         ModConfig config = ModConfig.get();
         if (config.authToken == null || config.authToken.isEmpty()) {
+            System.out.println("[MCMapper] Cannot start: no auth token");
             return;
         }
 
-        if (config.streamingServerId <= 0) {
+        if (!detectStreamingServer()) {
+            System.out.println("[MCMapper] Cannot start: no server detected");
             return;
         }
 
         if (!fetchStreamingCredentials()) {
-            return;
+            System.out.println("[MCMapper] Warning: Could not fetch credentials");
         }
 
         scheduler = Executors.newScheduledThreadPool(2, r -> {
@@ -236,11 +424,29 @@ public class MapStreamingService {
         );
 
         isRunning = true;
-    }
+        lastStartAttempt = 0;
 
-    private static void refreshSecretIfNeeded() {
-        if (secretNeedsRefresh()) {
-            fetchStreamingCredentials();
+        long timeSinceConnection = System.currentTimeMillis() - connectionTime;
+        long remainingDelay = Math.max(0, CONNECTION_DELAY_MS - timeSinceConnection);
+
+        System.out.println("[MCMapper] Streaming STARTED - " + detectedServerName + " (ID: " + detectedServerId + ")");
+        if (remainingDelay > 0) {
+            System.out.println("[MCMapper] Waiting " + (remainingDelay / 1000) + "s before processing chunks...");
+        }
+
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client.player != null) {
+            if (remainingDelay > 0) {
+                client.player.sendMessage(
+                    net.minecraft.text.Text.literal("§e[MCMapper] Streaming to: " + detectedServerName + " (waiting " + (remainingDelay / 1000) + "s)"),
+                    true
+                );
+            } else {
+                client.player.sendMessage(
+                    net.minecraft.text.Text.literal("§a[MCMapper] Streaming to: " + detectedServerName),
+                    true
+                );
+            }
         }
     }
 
@@ -267,27 +473,7 @@ public class MapStreamingService {
         }
 
         isRunning = false;
-    }
-
-    public static boolean isRunning() {
-        return isRunning;
-    }
-
-    public static boolean isInSafeZone() {
-        return inSafeZone;
-    }
-
-    public static boolean isInOverworld() {
-        return inOverworld;
-    }
-
-    private static boolean isInSafeZone(int x, int z) {
-        ModConfig config = ModConfig.get();
-        if (!config.safeZoneEnabled || config.safeZoneRadius <= 0) {
-            return false;
-        }
-        double distance = Math.sqrt(x * x + z * z);
-        return distance > config.safeZoneRadius;
+        System.out.println("[MCMapper] Streaming STOPPED");
     }
 
     private static void streamPendingGrids() {
@@ -304,19 +490,22 @@ public class MapStreamingService {
             }
 
             ModConfig config = ModConfig.get();
-            if (!config.streamingEnabled || config.authToken == null || config.streamingServerId <= 0) {
+            if (!config.streamingEnabled || config.authToken == null) {
+                return;
+            }
+
+            int serverId = getActiveServerId();
+            if (serverId <= 0) {
                 return;
             }
 
             if (streamingSecret == null) {
-                if (!fetchStreamingCredentials()) {
-                    return;
-                }
+                fetchStreamingCredentials();
             }
 
             int playerX = (int) Math.floor(client.player.getX());
             int playerZ = (int) Math.floor(client.player.getZ());
-            inSafeZone = isInSafeZone(playerX, playerZ);
+            inSafeZone = isInSafeZoneCheck(playerX, playerZ);
 
             if (inSafeZone) {
                 return;
@@ -348,6 +537,7 @@ public class MapStreamingService {
             }
 
         } catch (Exception e) {
+            System.out.println("[MCMapper] Stream error: " + e.getMessage());
         }
     }
 
@@ -382,18 +572,18 @@ public class MapStreamingService {
 
             ModConfig config = ModConfig.get();
             MinecraftClient client = MinecraftClient.getInstance();
+            int serverId = getActiveServerId();
 
             String playerName = client.player.getName().getString();
             String playerUuid = client.player.getUuidAsString();
             String dimension = client.world.getRegistryKey().getValue().toString();
-
             String currentServerAddress = B2TMapperMod.getCurrentServerAddress();
 
             int worldX = gridX * 128 - 64;
             int worldZ = gridZ * 128 - 64;
 
             JsonObject body = new JsonObject();
-            body.addProperty("server_id", config.streamingServerId);
+            body.addProperty("server_id", serverId);
             body.addProperty("grid_x", gridX);
             body.addProperty("grid_z", gridZ);
             body.addProperty("world_x", worldX);
@@ -442,35 +632,64 @@ public class MapStreamingService {
                     if (fetchStreamingCredentials()) {
                         streamGrid(gridKey, gridX, gridZ);
                     } else {
-                        notifyError("Streaming credentials expired. Reconnect to server.");
+                        notifyError("Streaming credentials expired.");
                         stop();
                     }
                 } else {
-                    notifyError("Streaming rejected: Wrong server or no permission.");
-                    stop();
+                    notifyError("Streaming rejected: " + responseBody);
                 }
+            } else {
+                System.out.println("[MCMapper] Upload failed: HTTP " + response.statusCode() + " - " + response.body());
             }
 
         } catch (Exception e) {
+            System.out.println("[MCMapper] Upload error: " + e.getMessage());
         }
     }
 
-    private static void notifyError(String message) {
-        MinecraftClient client = MinecraftClient.getInstance();
-        client.execute(() -> {
-            if (client.player != null) {
-                client.player.sendMessage(
-                    net.minecraft.text.Text.literal("§c" + message),
-                    false
-                );
-            }
-        });
+    private static boolean isInSafeZoneCheck(int x, int z) {
+        ModConfig config = ModConfig.get();
+        if (!config.safeZoneEnabled || config.safeZoneRadius <= 0) {
+            return false;
+        }
+        double distance = Math.sqrt(x * x + z * z);
+        return distance <= config.safeZoneRadius;
+    }
+
+    private static boolean serverAddressMatches(String current, String expected) {
+        if (current == null || expected == null) return false;
+        
+        String normalizedCurrent = current.toLowerCase()
+            .replace("https://", "")
+            .replace("http://", "")
+            .split(":")[0];
+            
+        String normalizedExpected = expected.toLowerCase()
+            .replace("https://", "")
+            .replace("http://", "")
+            .split(":")[0];
+        
+        return normalizedCurrent.equals(normalizedExpected) ||
+               normalizedCurrent.endsWith("." + normalizedExpected) ||
+               normalizedExpected.endsWith("." + normalizedCurrent) ||
+               normalizedCurrent.contains(normalizedExpected) ||
+               normalizedExpected.contains(normalizedCurrent);
     }
 
     private static boolean verifyServerAddress(ModConfig config) {
         String currentServer = B2TMapperMod.getCurrentServerAddress();
         if (currentServer == null) {
             return false;
+        }
+
+        if (detectedServerAddress != null && !detectedServerAddress.isEmpty()) {
+            String expected = detectedServerAddress.toLowerCase()
+                .replace("https://", "")
+                .replace("http://", "");
+            String actual = currentServer.toLowerCase();
+            if (actual.contains(expected) || expected.contains(actual)) {
+                return true;
+            }
         }
 
         if (config.streamingServerAddress == null || config.streamingServerAddress.isEmpty()) {
@@ -485,24 +704,63 @@ public class MapStreamingService {
         return currentServer.contains(configuredServer) || configuredServer.contains(currentServer);
     }
 
+    private static void notifyError(String message) {
+        MinecraftClient client = MinecraftClient.getInstance();
+        client.execute(() -> {
+            if (client.player != null) {
+                client.player.sendMessage(
+                    net.minecraft.text.Text.literal("§c[MCMapper] " + message),
+                    false
+                );
+            }
+        });
+    }
+
     public static void initialize() {
+        System.out.println("[MCMapper] Initializing MapStreamingService (with 25s connection delay)");
         registerEvents();
-        ModConfig config = ModConfig.get();
-        if (config.streamingEnabled && config.authToken != null && config.streamingServerId > 0) {
-            start();
-        }
     }
 
     public static void shutdown() {
         stop();
     }
 
+    public static boolean isRunning() {
+        return isRunning;
+    }
+
+    public static boolean isInSafeZone() {
+        return inSafeZone;
+    }
+
+    public static boolean isInOverworld() {
+        return inOverworld;
+    }
+
+    public static int getDetectedServerId() {
+        return detectedServerId;
+    }
+
+    public static String getDetectedServerName() {
+        return detectedServerName;
+    }
+
+    public static String getDetectedServerAddress() {
+        return detectedServerAddress;
+    }
+
     public static void clearData() {
         gridData.clear();
         lastSentCompletion.clear();
+        serverVerifiedChunks.clear();
         lastPlayerGridX = Integer.MIN_VALUE;
         lastPlayerGridZ = Integer.MIN_VALUE;
         streamingSecret = null;
         secretFetchedAt = 0;
+        lastConnectedServer = null;
+        detectedServerId = -1;
+        detectedServerName = null;
+        detectedServerAddress = null;
+        lastStartAttempt = 0;
     }
 }

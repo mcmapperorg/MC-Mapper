@@ -24,12 +24,14 @@ import com.b2tmapper.config.ModConfig;
 public class B2TMapperMod implements ClientModInitializer {
 
     public static final String MOD_ID = "b2t-mapper";
-    public static final String MOD_VERSION = "1.0.1";
+    public static final String MOD_VERSION = "1.0.4";
 
     private static KeyBinding pingKeyBinding;
     private static KeyBinding hideUiKey;
     private static KeyBinding menuKeyBinding;
     private static KeyBinding exportMapArtKey;
+    private static KeyBinding undoMapArtKey;
+    private static KeyBinding cancelMapArtKey;
 
     public static boolean hideModUI = false;
 
@@ -48,6 +50,8 @@ public class B2TMapperMod implements ClientModInitializer {
                     TrackedPingRenderer.get().renderHUD(context, tickCounter.getTickDelta(true));
                 }
             }
+            
+            MapArtExporter.renderHUD(context, MinecraftClient.getInstance());
         });
 
         pingKeyBinding = KeyBindingHelper.registerKeyBinding(new KeyBinding(
@@ -78,6 +82,20 @@ public class B2TMapperMod implements ClientModInitializer {
                 "category.b2tmapper"
         ));
 
+        undoMapArtKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+                "key.b2tmapper.undo_mapart",
+                InputUtil.Type.KEYSYM,
+                GLFW.GLFW_KEY_MINUS,
+                "category.b2tmapper"
+        ));
+
+        cancelMapArtKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
+                "key.b2tmapper.cancel_mapart",
+                InputUtil.Type.KEYSYM,
+                GLFW.GLFW_KEY_RIGHT_CONTROL,
+                "category.b2tmapper"
+        ));
+
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             PingExporter.tickScreenshot();
             PingCreatorPopup.tickScreenshot();
@@ -102,6 +120,14 @@ public class B2TMapperMod implements ClientModInitializer {
 
             if (exportMapArtKey.wasPressed()) {
                 MapArtExporter.tryExport();
+            }
+
+            if (undoMapArtKey.wasPressed()) {
+                MapArtExporter.undoLastTile();
+            }
+
+            if (cancelMapArtKey.wasPressed()) {
+                MapArtExporter.cancelExport();
             }
         });
 

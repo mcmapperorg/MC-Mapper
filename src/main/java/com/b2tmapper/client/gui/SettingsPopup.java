@@ -30,13 +30,12 @@ public class SettingsPopup extends Screen {
         super.init();
 
         popupWidth = 260;
-        popupHeight = 180;
+        popupHeight = 220;
         popupX = (width - popupWidth) / 2;
         popupY = (height - popupHeight) / 2;
 
         ModConfig config = ModConfig.get();
 
-        // Menu Position
         addDrawableChild(ButtonWidget.builder(
             Text.literal("Position: " + config.menuBarPosition.name()),
             button -> {
@@ -49,7 +48,6 @@ public class SettingsPopup extends Screen {
             }
         ).dimensions(popupX + 20, popupY + 40, 220, 20).build());
 
-        // Theme
         addDrawableChild(ButtonWidget.builder(
             Text.literal("Theme: " + config.uiTheme.displayName),
             button -> {
@@ -59,12 +57,10 @@ public class SettingsPopup extends Screen {
                 c.uiTheme = themes[next];
                 ModConfig.save();
                 button.setMessage(Text.literal("Theme: " + c.uiTheme.displayName));
-                // Re-init to apply theme
                 MinecraftClient.getInstance().setScreen(new SettingsPopup(parent));
             }
         ).dimensions(popupX + 20, popupY + 70, 220, 20).build());
 
-        // Show Ping Beacons
         addDrawableChild(ButtonWidget.builder(
             Text.literal("Ping Beacons: " + (config.showPingBeacons ? "ON" : "OFF")),
             button -> {
@@ -75,17 +71,21 @@ public class SettingsPopup extends Screen {
             }
         ).dimensions(popupX + 20, popupY + 100, 220, 20).build());
 
-        // Back
+        addDrawableChild(ButtonWidget.builder(
+            Text.literal("Map Art Export Settings"),
+            button -> {
+                MinecraftClient.getInstance().setScreen(new MapArtSettingsPopup(this));
+            }
+        ).dimensions(popupX + 20, popupY + 130, 220, 20).build());
+
         addDrawableChild(ButtonWidget.builder(
             Text.literal("Back"),
             button -> close()
-        ).dimensions(popupX + popupWidth/2 - 40, popupY + 140, 80, 20).build());
+        ).dimensions(popupX + popupWidth/2 - 40, popupY + 180, 80, 20).build());
     }
 
-    // Override to disable Minecraft 1.21's blur effect
     @Override
     protected void applyBlur(float delta) {
-        // Don't apply blur
     }
 
     @Override

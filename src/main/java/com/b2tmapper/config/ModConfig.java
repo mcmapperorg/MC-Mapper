@@ -13,38 +13,62 @@ public class ModConfig {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static File configFile;
 
-    // UI Settings
     public MenuBarPosition menuBarPosition = MenuBarPosition.TOP;
     public UITheme uiTheme = UITheme.GREEN;
 
-    // Auth
     public String authToken = null;
     public String linkedUsername = null;
 
-    // Live View Settings
     public boolean liveViewEnabled = false;
     public int liveViewServerId = -1;
     public String liveViewServerName = null;
 
-    // Map Streaming Settings
     public boolean streamingEnabled = false;
     public int streamingServerId = -1;
     public String streamingServerName = null;
     public String streamingServerAddress = null;
     
-    // Safe Zone - blocks from 0,0 where streaming is disabled
-    public int safeZoneRadius = 0; // 0 = disabled
+    public int safeZoneRadius = 0;
     public boolean safeZoneEnabled = false;
 
-    // Ping Settings
     public boolean showPingBeacons = true;
     public int maxActivePings = 5;
 
-    // Display Case (Map Art Export)
     public long lastMapArtExport = 0;
+    public MapArtSize mapArtSize = MapArtSize.SIZE_1x1;
+    public MapArtOrientation mapArtOrientation = MapArtOrientation.HORIZONTAL;
 
     public enum MenuBarPosition {
         TOP, LEFT, RIGHT
+    }
+
+    public enum MapArtSize {
+        SIZE_1x1(1, "1x1", 1),
+        SIZE_2x2(2, "2x2", 4),
+        SIZE_3x3(3, "3x3", 9),
+        SIZE_4x4(4, "4x4", 16),
+        SIZE_5x5(5, "5x5", 25);
+
+        public final int gridSize;
+        public final String displayName;
+        public final int totalMaps;
+
+        MapArtSize(int gridSize, String displayName, int totalMaps) {
+            this.gridSize = gridSize;
+            this.displayName = displayName;
+            this.totalMaps = totalMaps;
+        }
+    }
+
+    public enum MapArtOrientation {
+        HORIZONTAL("Horizontal (Row by Row)"),
+        VERTICAL("Vertical (Column by Column)");
+
+        public final String displayName;
+
+        MapArtOrientation(String displayName) {
+            this.displayName = displayName;
+        }
     }
 
     public enum UITheme {
@@ -119,7 +143,6 @@ public class ModConfig {
                 GSON.toJson(INSTANCE, writer);
             }
         } catch (Exception e) {
-            // Silent fail
         }
     }
 }

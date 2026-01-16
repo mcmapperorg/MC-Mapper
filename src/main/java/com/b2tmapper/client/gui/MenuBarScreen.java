@@ -63,20 +63,14 @@ public class MenuBarScreen extends Screen {
         }
     }
 
-    // Override to disable Minecraft 1.21's blur effect
     @Override
     protected void applyBlur(float delta) {
-        // Don't apply blur
     }
 
     @Override
     public void render(DrawContext context, int mouseX, int mouseY, float delta) {
-        // Semi-transparent background overlay (no blur)
         context.fill(0, 0, width, height, 0x88000000);
-        
-        // Menu bar
         renderMenuBar(context, mouseX, mouseY);
-        
         super.render(context, mouseX, mouseY, delta);
     }
 
@@ -183,19 +177,19 @@ public class MenuBarScreen extends Screen {
         MinecraftClient client = MinecraftClient.getInstance();
 
         switch (tabIndex) {
-            case 0: // Settings
+            case 0:
                 client.setScreen(new SettingsPopup(this));
                 break;
-            case 1: // Map Streaming
+            case 1:
                 client.setScreen(new MapStreamingPopup(this));
                 break;
-            case 2: // Ping List
+            case 2:
                 client.setScreen(new PingListPopup(this));
                 break;
-            case 3: // Live View
+            case 3:
                 client.setScreen(new LiveViewPopup(this));
                 break;
-            case 4: // Account
+            case 4:
                 client.setScreen(new AccountPopup(this));
                 break;
         }

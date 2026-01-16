@@ -1,9 +1,11 @@
 {
   "required": true,
+  "minVersion": "0.8",
   "package": "com.b2tmapper.mixin",
   "compatibilityLevel": "JAVA_21",
   "client": [
-    "CryingObsidianMapColorMixin"
+    "CryingObsidianMapColorMixin",
+    "ChunkDataMixin"
   ],
   "injectors": {
     "defaultRequire": 1
