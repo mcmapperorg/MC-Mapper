@@ -24,7 +24,7 @@ import com.b2tmapper.config.ModConfig;
 public class B2TMapperMod implements ClientModInitializer {
 
     public static final String MOD_ID = "b2t-mapper";
-    public static final String MOD_VERSION = "1.0.4";
+    public static final String MOD_VERSION = "1.0.5";
 
     private static KeyBinding pingKeyBinding;
     private static KeyBinding hideUiKey;
@@ -164,9 +164,6 @@ public class B2TMapperMod implements ClientModInitializer {
         if (MapStreamingService.isRunning()) {
             if (!MapStreamingService.isInOverworld()) {
                 statusText = "⚠ Mapping Paused (Overworld Only)";
-                statusColor = 0xFFFFAA00;
-            } else if (MapStreamingService.isInSafeZone()) {
-                statusText = "⚠ Mapping Paused (Safe Zone)";
                 statusColor = 0xFFFFAA00;
             } else {
                 statusText = "● Mapping Active";

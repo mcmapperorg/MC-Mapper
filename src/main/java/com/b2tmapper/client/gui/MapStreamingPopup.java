@@ -6,21 +6,23 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.text.Text;
 
 public class MapStreamingPopup extends Screen {
 
     private final Screen parent;
-    private TextFieldWidget safeZoneInput;
     
     private int popupX, popupY, popupWidth, popupHeight;
+    
+    private ButtonWidget streamingToggleButton;
+    private ButtonWidget safeZoneToggleButton;
 
     private int GREEN_BG() { return ModConfig.get().uiTheme.bg; }
     private int GREEN_HOVER() { return ModConfig.get().uiTheme.hover; }
     private int GREEN_BORDER() { return ModConfig.get().uiTheme.border; }
     private static final int WHITE = 0xFFFFFFFF;
     private static final int GRAY = 0xFFAAAAAA;
+    private static final int DARK_GRAY = 0xFF666666;
     private static final int YELLOW = 0xFFFFFF00;
     private static final int RED = 0xFFFF5555;
     private static final int GREEN = 0xFF55FF55;
@@ -35,44 +37,111 @@ public class MapStreamingPopup extends Screen {
     protected void init() {
         super.init();
         
-        popupWidth = 320;
-        popupHeight = 280;
+        popupWidth = 340;
+        popupHeight = 400;
         popupX = (width - popupWidth) / 2;
         popupY = (height - popupHeight) / 2;
 
         ModConfig config = ModConfig.get();
+        
+        int safetyBoxY = popupY + 150;
+        int buttonY = popupY + 310;
 
-        // Safe Zone Input
-        safeZoneInput = new TextFieldWidget(
-            textRenderer,
-            popupX + 180, popupY + 175, 80, 18,
-            Text.literal("Safe Zone")
-        );
-        safeZoneInput.setText(String.valueOf(config.safeZoneRadius));
-        safeZoneInput.setChangedListener(this::onSafeZoneChanged);
-        addDrawableChild(safeZoneInput);
-
-        // Toggle Streaming Button
         addDrawableChild(ButtonWidget.builder(
+            Text.literal("<"),
+            button -> adjustSafeZone(-1)
+        ).dimensions(popupX + 200, safetyBoxY + 20, 20, 16).build());
+
+        addDrawableChild(ButtonWidget.builder(
+            Text.literal(">"),
+            button -> adjustSafeZone(1)
+        ).dimensions(popupX + 295, safetyBoxY + 20, 20, 16).build());
+
+        addDrawableChild(ButtonWidget.builder(
+            Text.literal("<"),
+            button -> adjustStreamDelay(-1)
+        ).dimensions(popupX + 200, safetyBoxY + 45, 20, 16).build());
+
+        addDrawableChild(ButtonWidget.builder(
+            Text.literal(">"),
+            button -> adjustStreamDelay(1)
+        ).dimensions(popupX + 295, safetyBoxY + 45, 20, 16).build());
+
+        addDrawableChild(ButtonWidget.builder(
+            Text.literal(config.streamButtonsLocked ? "Lock Stream Buttons: ON" : "Lock Stream Buttons: OFF"),
+            button -> toggleStreamButtonsLock(button)
+        ).dimensions(popupX + 20, popupY + 265, 180, 20).build());
+
+        streamingToggleButton = ButtonWidget.builder(
             Text.literal(config.streamingEnabled ? "Disable Streaming" : "Enable Streaming"),
             button -> toggleStreaming(button)
-        ).dimensions(popupX + 20, popupY + 220, 130, 20).build());
+        ).dimensions(popupX + 20, popupY + 320, 140, 20).build();
+        streamingToggleButton.active = !config.streamButtonsLocked;
+        addDrawableChild(streamingToggleButton);
 
-        // Safe Zone Toggle Button
-        addDrawableChild(ButtonWidget.builder(
+        safeZoneToggleButton = ButtonWidget.builder(
             Text.literal(config.safeZoneEnabled ? "Safe Zone: ON" : "Safe Zone: OFF"),
             button -> toggleSafeZone(button)
-        ).dimensions(popupX + 170, popupY + 220, 130, 20).build());
+        ).dimensions(popupX + 180, popupY + 320, 140, 20).build();
+        addDrawableChild(safeZoneToggleButton);
 
-        // Back Button
         addDrawableChild(ButtonWidget.builder(
             Text.literal("Back"),
             button -> close()
-        ).dimensions(popupX + popupWidth / 2 - 40, popupY + 250, 80, 20).build());
+        ).dimensions(popupX + popupWidth / 2 - 40, popupY + 350, 80, 20).build());
+    }
+
+    private void adjustSafeZone(int direction) {
+        ModConfig config = ModConfig.get();
+        int newValue = config.safeZoneRadius + (direction * ModConfig.SAFE_ZONE_INCREMENT);
+        
+        if (newValue < 0) newValue = 0;
+        if (newValue > ModConfig.SAFE_ZONE_MAX) newValue = ModConfig.SAFE_ZONE_MAX;
+        
+        config.safeZoneRadius = newValue;
+        ModConfig.save();
+    }
+
+    private void adjustStreamDelay(int direction) {
+        ModConfig config = ModConfig.get();
+        int[] options = ModConfig.STREAM_DELAY_OPTIONS;
+        
+        int currentIndex = 0;
+        for (int i = 0; i < options.length; i++) {
+            if (options[i] == config.streamDelayMinutes) {
+                currentIndex = i;
+                break;
+            }
+        }
+        
+        int newIndex = currentIndex + direction;
+        if (newIndex < 0) newIndex = 0;
+        if (newIndex >= options.length) newIndex = options.length - 1;
+        
+        config.streamDelayMinutes = options[newIndex];
+        ModConfig.save();
+    }
+
+    private void toggleStreamButtonsLock(ButtonWidget button) {
+        ModConfig config = ModConfig.get();
+        config.streamButtonsLocked = !config.streamButtonsLocked;
+        ModConfig.save();
+        
+        button.setMessage(Text.literal(config.streamButtonsLocked ? 
+            "Lock Stream Buttons: ON" : "Lock Stream Buttons: OFF"));
+        
+        if (streamingToggleButton != null) {
+            streamingToggleButton.active = !config.streamButtonsLocked;
+        }
     }
 
     private void toggleStreaming(ButtonWidget button) {
         ModConfig config = ModConfig.get();
+        
+        if (config.streamButtonsLocked) {
+            return;
+        }
+        
         config.streamingEnabled = !config.streamingEnabled;
         ModConfig.save();
         
@@ -93,44 +162,25 @@ public class MapStreamingPopup extends Screen {
         button.setMessage(Text.literal(config.safeZoneEnabled ? "Safe Zone: ON" : "Safe Zone: OFF"));
     }
 
-    private void onSafeZoneChanged(String value) {
-        try {
-            int radius = Integer.parseInt(value);
-            if (radius >= 0) {
-                ModConfig config = ModConfig.get();
-                config.safeZoneRadius = radius;
-                ModConfig.save();
-            }
-        } catch (NumberFormatException e) {
-            // Ignore invalid input
-        }
-    }
-
-    // Override to disable Minecraft 1.21's blur effect
     @Override
     protected void applyBlur(float delta) {
-        // Don't apply blur
     }
 
     @Override
     public void render(DrawContext context, int mouseX, int mouseY, float delta) {
-        // Darken background (no blur)
         context.fill(0, 0, width, height, 0x88000000);
         
-        // Popup background
         context.fill(popupX, popupY, popupX + popupWidth, popupY + popupHeight, GREEN_BG());
         drawBorder(context, popupX, popupY, popupWidth, popupHeight, GREEN_BORDER());
 
         ModConfig config = ModConfig.get();
         int y = popupY + 10;
 
-        // Title
         String title = "Map Streaming";
         int titleX = popupX + (popupWidth - textRenderer.getWidth(title)) / 2;
         context.drawTextWithShadow(textRenderer, title, titleX, y, WHITE);
         y += 20;
 
-        // Warning Box
         int warningY = y;
         context.fill(popupX + 10, warningY, popupX + popupWidth - 10, warningY + 50, 0xAA442200);
         drawBorder(context, popupX + 10, warningY, popupWidth - 20, 50, ORANGE);
@@ -140,19 +190,13 @@ public class MapStreamingPopup extends Screen {
         context.drawTextWithShadow(textRenderer, "visible to all users on the map.", popupX + 20, warningY + 30, GRAY);
         y += 60;
 
-        // Status Section
         context.drawTextWithShadow(textRenderer, "Status:", popupX + 20, y, WHITE);
         
         String statusText;
         int statusColor;
         if (config.streamingEnabled && MapStreamingService.isRunning()) {
-            if (MapStreamingService.isInSafeZone()) {
-                statusText = "Paused (In Safe Zone)";
-                statusColor = YELLOW;
-            } else {
-                statusText = "Active - Mapping";
-                statusColor = GREEN;
-            }
+            statusText = "Active - Streaming";
+            statusColor = GREEN;
         } else if (config.streamingEnabled) {
             statusText = "Enabled (Not Connected)";
             statusColor = YELLOW;
@@ -163,31 +207,52 @@ public class MapStreamingPopup extends Screen {
         context.drawTextWithShadow(textRenderer, statusText, popupX + 80, y, statusColor);
         y += 20;
 
-        // Server Section
         context.drawTextWithShadow(textRenderer, "Server:", popupX + 20, y, WHITE);
-        String serverName = config.streamingServerName != null ? config.streamingServerName : "Not Selected";
-        context.drawTextWithShadow(textRenderer, serverName, popupX + 80, y, config.streamingServerId > 0 ? GREEN : GRAY);
+        String detectedName = MapStreamingService.getDetectedServerName();
+        int detectedId = MapStreamingService.getDetectedServerId();
+        String serverName = detectedName != null ? detectedName : "Not Detected";
+        context.drawTextWithShadow(textRenderer, serverName, popupX + 80, y, detectedId > 0 ? GREEN : GRAY);
         y += 15;
         
-        if (config.streamingServerAddress != null) {
-            context.drawTextWithShadow(textRenderer, "Address: " + config.streamingServerAddress, popupX + 20, y, GRAY);
-        }
+        String currentServer = com.b2tmapper.B2TMapperMod.getCurrentServerAddress();
+        if (currentServer == null) currentServer = "singleplayer";
+        context.drawTextWithShadow(textRenderer, "Connected: " + currentServer, popupX + 20, y, GRAY);
         y += 25;
 
-        // Safe Zone Section
-        context.fill(popupX + 10, y, popupX + popupWidth - 10, y + 55, 0x44000000);
-        drawBorder(context, popupX + 10, y, popupWidth - 20, 55, GREEN_BORDER());
+        int safetyBoxY = popupY + 150;
+        context.fill(popupX + 10, safetyBoxY, popupX + popupWidth - 10, safetyBoxY + 70, 0x44000000);
+        drawBorder(context, popupX + 10, safetyBoxY, popupWidth - 20, 70, GREEN_BORDER());
         
-        context.drawTextWithShadow(textRenderer, "Safe Zone Settings", popupX + 20, y + 5, WHITE);
-        context.drawTextWithShadow(textRenderer, "Radius from 0,0:", popupX + 20, y + 22, GRAY);
+        context.drawTextWithShadow(textRenderer, "Safety Settings", popupX + 20, safetyBoxY + 5, WHITE);
         
-        String safeZoneStatus = config.safeZoneEnabled ? 
-            "Streaming pauses within " + config.safeZoneRadius + " blocks of spawn" :
-            "Safe zone protection is disabled";
-        context.drawTextWithShadow(textRenderer, safeZoneStatus, popupX + 20, y + 40, 
-            config.safeZoneEnabled ? YELLOW : GRAY);
+        context.drawTextWithShadow(textRenderer, "Safe Zone:", popupX + 20, safetyBoxY + 24, GRAY);
+        String safeZoneText = formatDistance(config.safeZoneRadius);
+        int safeZoneTextWidth = textRenderer.getWidth(safeZoneText);
+        int safeZoneCenterX = popupX + 257;
+        context.drawTextWithShadow(textRenderer, safeZoneText, safeZoneCenterX - safeZoneTextWidth / 2, safetyBoxY + 24, WHITE);
+        
+        context.drawTextWithShadow(textRenderer, "Stream Delay:", popupX + 20, safetyBoxY + 49, GRAY);
+        String delayText = config.streamDelayMinutes == 0 ? "None" : config.streamDelayMinutes + " min";
+        int delayTextWidth = textRenderer.getWidth(delayText);
+        int delayCenterX = popupX + 257;
+        context.drawTextWithShadow(textRenderer, delayText, delayCenterX - delayTextWidth / 2, safetyBoxY + 49, WHITE);
+
+        if (config.safeZoneEnabled && config.safeZoneRadius > 0) {
+            String safeZoneWarning = "⚠ Leaving zone will STOP streaming";
+            context.drawTextWithShadow(textRenderer, safeZoneWarning, popupX + 20, popupY + 230, ORANGE);
+        }
 
         super.render(context, mouseX, mouseY, delta);
+    }
+
+    private String formatDistance(int blocks) {
+        if (blocks >= 1000000) {
+            return String.format("%.1fm", blocks / 1000000.0);
+        } else if (blocks >= 1000) {
+            return String.format("%dk", blocks / 1000);
+        } else {
+            return String.valueOf(blocks);
+        }
     }
 
     private void drawBorder(DrawContext context, int x, int y, int w, int h, int color) {

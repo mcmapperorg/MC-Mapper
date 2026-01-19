@@ -31,12 +31,20 @@ public class ModConfig {
     public int safeZoneRadius = 0;
     public boolean safeZoneEnabled = false;
 
+    public int streamDelayMinutes = 0;
+    public boolean gridSkipDetectionEnabled = false;
+    public boolean streamButtonsLocked = false;
+
     public boolean showPingBeacons = true;
     public int maxActivePings = 5;
 
     public long lastMapArtExport = 0;
     public MapArtSize mapArtSize = MapArtSize.SIZE_1x1;
     public MapArtOrientation mapArtOrientation = MapArtOrientation.HORIZONTAL;
+
+    public static final int[] STREAM_DELAY_OPTIONS = {0, 2, 5, 10};
+    public static final int SAFE_ZONE_INCREMENT = 50000;
+    public static final int SAFE_ZONE_MAX = 30000000;
 
     public enum MenuBarPosition {
         TOP, LEFT, RIGHT

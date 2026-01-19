@@ -38,6 +38,7 @@ public class MapStreamingService {
     private static final int SECRET_REFRESH_MS = 4 * 60 * 60 * 1000;
     private static final long START_RETRY_COOLDOWN_MS = 30000;
     private static final long CONNECTION_DELAY_MS = 25000;
+    private static final int GRID_SKIP_THRESHOLD = 3;
 
     private static ScheduledExecutorService scheduler;
     private static ScheduledFuture<?> streamTask;
@@ -46,6 +47,8 @@ public class MapStreamingService {
     private static boolean inSafeZone = false;
     private static boolean inOverworld = true;
     private static boolean eventsRegistered = false;
+    private static boolean gridSkipKilled = false;
+    private static boolean safeZoneKilled = false;
 
     private static String streamingSecret = null;
     private static long secretFetchedAt = 0;
@@ -57,6 +60,9 @@ public class MapStreamingService {
     private static String detectedServerAddress = null;
     private static String lastConnectedServer = null;
     private static int tickCounter = 0;
+
+    private static int lastUploadedGridX = Integer.MIN_VALUE;
+    private static int lastUploadedGridZ = Integer.MIN_VALUE;
 
     private static final Set<String> serverVerifiedChunks = ConcurrentHashMap.newKeySet();
     private static final HttpClient httpClient = HttpClient.newHttpClient();
@@ -118,6 +124,13 @@ public class MapStreamingService {
             System.out.println("[MCMapper] Starting 25 second delay to filter Baritone cache...");
             connectionTime = System.currentTimeMillis();
             clearData();
+            
+            ModConfig config = ModConfig.get();
+            if (config.streamingEnabled) {
+                config.streamingEnabled = false;
+                ModConfig.save();
+                System.out.println("[MCMapper] Streaming disabled on reconnect - must be manually re-enabled");
+            }
         });
 
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
@@ -178,7 +191,7 @@ public class MapStreamingService {
             if (config.safeZoneEnabled && config.safeZoneRadius > 0) {
                 int centerX = baseX + 8;
                 int centerZ = baseZ + 8;
-                if (isInSafeZoneCheck(centerX, centerZ)) {
+                if (!isInSafeZoneCheck(centerX, centerZ)) {
                     return;
                 }
             }
@@ -189,7 +202,7 @@ public class MapStreamingService {
                     int z = baseZ + dz;
 
                     if (config.safeZoneEnabled && config.safeZoneRadius > 0) {
-                        if (isInSafeZoneCheck(x, z)) {
+                        if (!isInSafeZoneCheck(x, z)) {
                             continue;
                         }
                     }
@@ -394,6 +407,24 @@ public class MapStreamingService {
             return;
         }
 
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (config.safeZoneEnabled && config.safeZoneRadius > 0 && client.player != null) {
+            int playerX = (int) Math.floor(client.player.getX());
+            int playerZ = (int) Math.floor(client.player.getZ());
+            if (!isInSafeZoneCheck(playerX, playerZ)) {
+                System.out.println("[MCMapper] Cannot start: player outside safe zone");
+                if (client.player != null) {
+                    client.player.sendMessage(
+                        net.minecraft.text.Text.literal("§c[MCMapper] Cannot start - you are outside your safe zone!"),
+                        false
+                    );
+                }
+                config.streamingEnabled = false;
+                ModConfig.save();
+                return;
+            }
+        }
+
         if (!detectStreamingServer()) {
             System.out.println("[MCMapper] Cannot start: no server detected");
             return;
@@ -402,6 +433,11 @@ public class MapStreamingService {
         if (!fetchStreamingCredentials()) {
             System.out.println("[MCMapper] Warning: Could not fetch credentials");
         }
+
+        gridSkipKilled = false;
+        safeZoneKilled = false;
+        lastUploadedGridX = Integer.MIN_VALUE;
+        lastUploadedGridZ = Integer.MIN_VALUE;
 
         scheduler = Executors.newScheduledThreadPool(2, r -> {
             Thread t = new Thread(r, "MapStreaming-Service");
@@ -434,7 +470,6 @@ public class MapStreamingService {
             System.out.println("[MCMapper] Waiting " + (remainingDelay / 1000) + "s before processing chunks...");
         }
 
-        MinecraftClient client = MinecraftClient.getInstance();
         if (client.player != null) {
             if (remainingDelay > 0) {
                 client.player.sendMessage(
@@ -455,7 +490,9 @@ public class MapStreamingService {
             return;
         }
 
-        streamPendingGrids();
+        if (!gridSkipKilled && !safeZoneKilled) {
+            streamPendingGrids();
+        }
 
         if (streamTask != null) {
             streamTask.cancel(false);
@@ -476,8 +513,87 @@ public class MapStreamingService {
         System.out.println("[MCMapper] Streaming STOPPED");
     }
 
+    private static void killStreamingDueToSafeZone(int playerX, int playerZ) {
+        safeZoneKilled = true;
+        
+        gridData.clear();
+        lastSentCompletion.clear();
+        
+        ModConfig config = ModConfig.get();
+        int radius = config.safeZoneRadius;
+        double distance = Math.sqrt(playerX * playerX + playerZ * playerZ);
+        
+        System.out.println("[MCMapper] SAFE ZONE VIOLATION: Player at (" + playerX + "," + playerZ + ") - Distance: " + (int)distance + " > Limit: " + radius);
+        
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client.player != null) {
+            client.execute(() -> {
+                client.player.sendMessage(
+                    net.minecraft.text.Text.literal("§c[MCMapper] Left safe zone! Streaming stopped. Re-enable manually."),
+                    false
+                );
+            });
+        }
+        
+        stop();
+        
+        config.streamingEnabled = false;
+        ModConfig.save();
+    }
+
+    private static void killStreamingDueToGridSkip(int fromGridX, int fromGridZ, int toGridX, int toGridZ) {
+        gridSkipKilled = true;
+        
+        gridData.clear();
+        lastSentCompletion.clear();
+        
+        System.out.println("[MCMapper] GRID SKIP DETECTED: (" + fromGridX + "," + fromGridZ + ") -> (" + toGridX + "," + toGridZ + ") - Upload killed!");
+        
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client.player != null) {
+            client.execute(() -> {
+                client.player.sendMessage(
+                    net.minecraft.text.Text.literal("§c[MCMapper] Grid skip detected! Upload killed for safety."),
+                    false
+                );
+            });
+        }
+        
+        stop();
+        
+        ModConfig config = ModConfig.get();
+        config.streamingEnabled = false;
+        ModConfig.save();
+    }
+
+    private static boolean checkGridSkip(int newGridX, int newGridZ) {
+        ModConfig config = ModConfig.get();
+        if (!config.gridSkipDetectionEnabled) {
+            return false;
+        }
+        
+        if (lastUploadedGridX == Integer.MIN_VALUE) {
+            return false;
+        }
+        
+        int distanceX = Math.abs(newGridX - lastUploadedGridX);
+        int distanceZ = Math.abs(newGridZ - lastUploadedGridZ);
+        int totalDistance = distanceX + distanceZ;
+        
+        if (totalDistance > GRID_SKIP_THRESHOLD) {
+            killStreamingDueToGridSkip(lastUploadedGridX, lastUploadedGridZ, newGridX, newGridZ);
+            return true;
+        }
+        
+        return false;
+    }
+
     private static void streamPendingGrids() {
         try {
+            if (gridSkipKilled || safeZoneKilled) {
+                return;
+            }
+            
             MinecraftClient client = MinecraftClient.getInstance();
             if (client.player == null || client.world == null) {
                 return;
@@ -505,9 +621,11 @@ public class MapStreamingService {
 
             int playerX = (int) Math.floor(client.player.getX());
             int playerZ = (int) Math.floor(client.player.getZ());
+            
             inSafeZone = isInSafeZoneCheck(playerX, playerZ);
 
-            if (inSafeZone) {
+            if (config.safeZoneEnabled && config.safeZoneRadius > 0 && !inSafeZone) {
+                killStreamingDueToSafeZone(playerX, playerZ);
                 return;
             }
 
@@ -528,6 +646,8 @@ public class MapStreamingService {
             lastPlayerGridZ = currentGridZ;
 
             for (Map.Entry<String, int[]> entry : gridData.entrySet()) {
+                if (gridSkipKilled || safeZoneKilled) return;
+                
                 String gridKey = entry.getKey();
                 String[] parts = gridKey.split(",");
                 int gridX = Integer.parseInt(parts[0]);
@@ -543,6 +663,10 @@ public class MapStreamingService {
 
     private static void streamGrid(String gridKey, int gridX, int gridZ) {
         try {
+            if (gridSkipKilled || safeZoneKilled) {
+                return;
+            }
+            
             int[] colors = gridData.get(gridKey);
             if (colors == null) {
                 return;
@@ -593,6 +717,7 @@ public class MapStreamingService {
             body.addProperty("dimension", dimension);
             body.addProperty("server_address", currentServerAddress != null ? currentServerAddress : "");
             body.addProperty("streaming_secret", streamingSecret != null ? streamingSecret : "");
+            body.addProperty("delay_minutes", config.streamDelayMinutes);
 
             JsonArray colorsArray = new JsonArray();
             for (int color : colors) {
@@ -612,15 +737,20 @@ public class MapStreamingService {
 
             if (response.statusCode() == 200) {
                 lastSentCompletion.put(gridKey, completionPercent);
+                
+                lastUploadedGridX = gridX;
+                lastUploadedGridZ = gridZ;
 
                 if (completionPercent >= 5 && (lastSent == null || completionPercent >= lastSent + 5)) {
                     final int finalPercent = completionPercent;
                     final int finalGridX = gridX;
                     final int finalGridZ = gridZ;
+                    final int delayMins = config.streamDelayMinutes;
                     client.execute(() -> {
                         if (client.player != null) {
+                            String delayText = delayMins > 0 ? " (+" + delayMins + "m delay)" : "";
                             client.player.sendMessage(
-                                net.minecraft.text.Text.literal("§a⬆ Streamed (" + finalGridX + ", " + finalGridZ + ") - " + finalPercent + "%"),
+                                net.minecraft.text.Text.literal("§a⬆ Streamed (" + finalGridX + ", " + finalGridZ + ") - " + finalPercent + "%" + delayText),
                                 true
                             );
                         }
@@ -650,7 +780,7 @@ public class MapStreamingService {
     private static boolean isInSafeZoneCheck(int x, int z) {
         ModConfig config = ModConfig.get();
         if (!config.safeZoneEnabled || config.safeZoneRadius <= 0) {
-            return false;
+            return true;
         }
         double distance = Math.sqrt(x * x + z * z);
         return distance <= config.safeZoneRadius;
@@ -749,12 +879,22 @@ public class MapStreamingService {
         return detectedServerAddress;
     }
 
+    public static boolean isGridSkipKilled() {
+        return gridSkipKilled;
+    }
+
+    public static boolean isSafeZoneKilled() {
+        return safeZoneKilled;
+    }
+
     public static void clearData() {
         gridData.clear();
         lastSentCompletion.clear();
         serverVerifiedChunks.clear();
         lastPlayerGridX = Integer.MIN_VALUE;
         lastPlayerGridZ = Integer.MIN_VALUE;
+        lastUploadedGridX = Integer.MIN_VALUE;
+        lastUploadedGridZ = Integer.MIN_VALUE;
         streamingSecret = null;
         secretFetchedAt = 0;
         lastConnectedServer = null;
@@ -762,5 +902,7 @@ public class MapStreamingService {
         detectedServerName = null;
         detectedServerAddress = null;
         lastStartAttempt = 0;
+        gridSkipKilled = false;
+        safeZoneKilled = false;
     }
 }
